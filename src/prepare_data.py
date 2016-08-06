@@ -71,7 +71,9 @@ def load_train_data():
     train_ids = np.array(f['train_ids'])
     f.close()
 
-    return imgs_train, imgs_mask_train, train_ids
+    return imgs_train[:, 0, :400, 100:500].reshape(5634, 1, 400, 400), \
+           imgs_mask_train[:, 0, :400, 100:500].reshape(5634, 1, 400, 400), \
+           train_ids
 
 
 def create_test_data():
@@ -114,7 +116,7 @@ def load_test_data():
     imgs_test = np.array(f['test'])
     imgs_id = np.array(f['test_id'])
     f.close()
-    return imgs_test, imgs_id
+    return imgs_test[:, 0, :400, 100:500].reshape(5508, 1, 400, 400), imgs_id
 
 if __name__ == '__main__':
     create_train_data()
