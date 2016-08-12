@@ -13,24 +13,46 @@ from sklearn.cross_validation import train_test_split
 from prepare_data import load_train_data, load_test_data
 import datetime
 
-img_rows = 64 * 2
-img_cols = 80 * 2
+img_rows = 64 * 4
+img_cols = 80 * 4
 
 smooth = 1.0
 
 
-# def dice_coef(y_true, y_pred):
-#     y_true_f = K.batch_flatten(y_true)
-#     y_pred_f = K.batch_flatten(y_pred)
-#     intersection = 2. * K.sum(y_true_f * y_pred_f, axis=1, keepdims=True) + smooth
-#     union = K.sum(y_true_f, axis=1, keepdims=True) + K.sum(y_pred_f, axis=1, keepdims=True) + smooth
-#     return K.mean(intersection / union)
+def inverse_dice_coef(y_true, y_pred):
+    y_true_f = K.batch_flatten(1 - y_true)
+    y_pred_f = K.batch_flatten(1 - y_pred)
+    intersection = 2. * K.sum(y_true_f * y_pred_f, axis=1, keepdims=True) + smooth
+    union = K.sum(y_true_f, axis=1, keepdims=True) + K.sum(y_pred_f, axis=1, keepdims=True) + smooth
+    return -K.mean(intersection / union)
+
 
 def dice_coef(y_true, y_pred):
     y_true_f = K.flatten(y_true)
     y_pred_f = K.flatten(y_pred)
     intersection = K.sum(y_true_f * y_pred_f)
     return (2. * intersection + smooth) / (K.sum(y_true_f) + K.sum(y_pred_f) + smooth)
+
+
+# def inverse_dice_coef(y_true, y_pred):
+#     y_true_f = K.flatten(1 - y_true)
+#     y_pred_f = K.flatten(1 - y_pred)
+#     intersection = K.sum(y_true_f * y_pred_f)
+#     return -(2. * intersection + smooth) / (K.sum(y_true_f) + K.sum(y_pred_f) + smooth)
+#
+#
+# def _find_threashold(y_true, y_pred, a):
+#     """Heavy penalty for predicting even one pixel when there is no mask. Train/test sampled randomly =>
+#     percent of zero mask should be similar in train, validation and test =>
+#      we need to zero out masks in such a way that percent of zero  masks in prediction would be equal
+#      to percent of zero masks in train
+#     """
+#     percent_non_zero_true = np.mean((np.mean(y_true.astype(int), (2, 3)) > 0))
+#     num_pixels = np.prod(y_pred[0].shape)
+#     for i in range(num_pixels):
+#         percent_non_zero_pred = np.mean(np.sum((y_pred > a).astype(int), (2, 3)) > i)
+#         if abs(percent_non_zero_true - percent_non_zero_pred) < 0.001:
+#             return i
 
 
 def dice_coef_np(y_true, y_pred, a):
@@ -185,7 +207,7 @@ def train_and_predict():
     X_train, X_test, X_val, y_train, y_test, y_val = _train_val_split(imgs_train, imgs_mask_train)
 
     mean = np.mean(X_train)  # mean for data centering
-    std = np.std(X_train)  # std for data normalization
+    # std = np.std(X_train)  # std for data normalization
 
     X_train -= mean
     # X_train /= std  # We can probably live without this.
@@ -197,24 +219,24 @@ def train_and_predict():
     # X_val /= std  # We can probably live without this.
     # X_val /= 255 # We can probably live without this.
 
-    y_train = y_train.astype(np.float32) / 255  # scale masks to [0, 1]
-    y_test = y_test.astype(np.float32) / 255    # scale masks to [0, 1]
-    y_val = y_val.astype(np.float32) / 255      # scale masks to [0, 1]
+    y_train = (y_train.astype(np.float32) / 255).astype(int).astype(float)  # scale masks to [0, 1]
+    y_test = (y_test.astype(np.float32) / 255).astype(int).astype(float)    # scale masks to [0, 1]
+    y_val = (y_val.astype(np.float32) / 255).astype(int).astype(float)      # scale masks to [0, 1]
 
     print
-    print '[{}] Num train zero masks...'.format(np.mean((np.mean(y_train, (2, 3)) == 0).astype(int).flatten()))
-    print '[{}] Num val zero masks...'.format(np.mean((np.mean(y_val, (2, 3)) == 0).astype(int).flatten()))
-    print '[{}] Num test zero masks...'.format(np.mean((np.mean(y_test, (2, 3)) == 0).astype(int).flatten()))
+    print '[{}] Num train non zero masks...'.format(np.mean((np.mean(y_train, (2, 3)) > 0).astype(int).flatten()))
+    print '[{}] Num val non zero masks...'.format(np.mean((np.mean(y_val, (2, 3)) > 0).astype(int).flatten()))
+    print '[{}] Num test non zero masks...'.format(np.mean((np.mean(y_test, (2, 3)) > 0).astype(int).flatten()))
 
     print('[{}] Creating and compiling model...'.format(str(datetime.datetime.now())))
 
     model = get_unet()
-    model_checkpoint = ModelCheckpoint('unet.hdf5', monitor='loss', save_best_only=True)
+    # model_checkpoint = ModelCheckpoint('unet.hdf5', monitor='loss', save_best_only=True)
 
     print('[{}] Fitting model...'.format(str(datetime.datetime.now())))
 
     model.fit(X_train, y_train,
-              batch_size=64,
+              batch_size=16,
               nb_epoch=20,
               verbose=1,
               shuffle=True,
@@ -226,9 +248,10 @@ def train_and_predict():
 
     for a in np.arange(0, 1, 0.1):
         score = dice_coef_np(y_test, y_pred, a)
-        print '[{date}] a = {a}, Score = {score}'.format(date=str(datetime.datetime.now()),
-                                            score=score, a=a)
-
+        print '[{date}] a = {a}. Score = {score}'.format(date=str(datetime.datetime.now()),
+                                                                                    score=score,
+                                                                                    a=a)
+    print
     print('[{}] Loading and preprocessing test data...'.format(str(datetime.datetime.now())))
 
     imgs_test, imgs_id_test = load_test_data()

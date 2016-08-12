@@ -3,6 +3,7 @@ from __future__ import division
 import pandas as pd
 import numpy as np
 import cv2
+from tqdm import tqdm
 from prepare_data import image_cols, image_rows, load_test_data
 import h5py
 
@@ -34,7 +35,7 @@ def run_length_enc(label):
     res = list(chain.from_iterable(res))
     return ' '.join([str(r) for r in res])
 
-black_list = [10, 168, 1907, 2343, 5185]
+black_list = [10, 168, 1625, 1733, 1907, 2343, 2523, 2775, 3128, 4519, 4582, 5063, 5185, 5459]
 
 def submission():
     # imgs_test, imgs_id_test = load_test_data()
@@ -42,7 +43,7 @@ def submission():
     imgs_id_test = np.array(f['test_id'])
     f.close()
 
-    f = h5py.File('../data/pred_21.h5')
+    f = h5py.File('../data/pred_15.h5')
     imgs_test = np.array(f['test_mask'])
     f.close()
 
@@ -69,7 +70,7 @@ def submission():
     total = imgs_test.shape[0]
     ids = []
     rles = []
-    for i in range(total):
+    for i in tqdm(range(total)):
         img = imgs_test[i, 0]
         img = prep(img)
         rle = run_length_enc(img)
@@ -77,10 +78,7 @@ def submission():
         rles.append(rle)
         ids.append(imgs_id_test[i])
 
-        if i % 100 == 0:
-            print('{}/{}'.format(i, total))
-
-    file_name = 'submission3a.csv'
+    file_name = 'submissions/submission3b.csv'
 
     df = pd.DataFrame()
     df['img'] = imgs_id_test

@@ -64,12 +64,6 @@ def dice_coef(y_true, y_pred):
 #         if abs(percent_non_zero_true - percent_non_zero_pred) < 0.001:
 #             return i
 
-def extra_data():
-    imgs_test, imgs_id_test = load_test_data()
-    imgs_test_mask = np.load('imgs_mask_test.npy')
-
-    return preprocess(imgs_test), preprocess(imgs_test_mask)
-
 
 def dice_coef_np(y_true, y_pred, a):
     result = 0
@@ -93,7 +87,8 @@ def get_unet():
     conv1 = Convolution2D(32, 3, 3, border_mode='same', init='he_uniform')(conv1)
     conv1 = BatchNormalization()(conv1)
     conv1 = keras.layers.advanced_activations.PReLU(init='zero', weights=None)(conv1)
-    pool1 = MaxPooling2D(pool_size=(2, 2))(conv1)
+    pool1 = merge([AveragePooling2D(pool_size=(2, 2))(conv1), MaxPooling2D(pool_size=(2, 2))(conv1)], mode='concat',
+                  concat_axis=1)
 
     conv2 = Convolution2D(64, 3, 3, border_mode='same', init='he_uniform')(pool1)
     conv2 = BatchNormalization()(conv2)
@@ -101,7 +96,9 @@ def get_unet():
     conv2 = Convolution2D(64, 3, 3, border_mode='same', init='he_uniform')(conv2)
     conv2 = BatchNormalization()(conv2)
     conv2 = keras.layers.advanced_activations.PReLU(init='zero', weights=None)(conv2)
-    pool2 = MaxPooling2D(pool_size=(2, 2))(conv2)
+    pool2 = merge([AveragePooling2D(pool_size=(2, 2))(conv2), MaxPooling2D(pool_size=(2, 2))(conv2)], mode='concat',
+                  concat_axis=1)
+
 
     conv3 = Convolution2D(128, 3, 3, border_mode='same', init='he_uniform')(pool2)
     conv3 = BatchNormalization()(conv3)
@@ -109,7 +106,8 @@ def get_unet():
     conv3 = Convolution2D(128, 3, 3, border_mode='same', init='he_uniform')(conv3)
     conv3 = BatchNormalization()(conv3)
     conv3 = keras.layers.advanced_activations.PReLU(init='zero', weights=None)(conv3)
-    pool3 = MaxPooling2D(pool_size=(2, 2))(conv3)
+    pool3 = merge([AveragePooling2D(pool_size=(2, 2))(conv3), MaxPooling2D(pool_size=(2, 2))(conv3)], mode='concat',
+                  concat_axis=1)
 
     conv4 = Convolution2D(256, 3, 3, border_mode='same', init='he_uniform')(pool3)
     conv4 = BatchNormalization()(conv4)
@@ -117,7 +115,8 @@ def get_unet():
     conv4 = Convolution2D(256, 3, 3, border_mode='same', init='he_uniform')(conv4)
     conv4 = BatchNormalization()(conv4)
     conv4 = keras.layers.advanced_activations.PReLU(init='zero', weights=None)(conv4)
-    pool4 = MaxPooling2D(pool_size=(2, 2))(conv4)
+    pool4 = merge([AveragePooling2D(pool_size=(2, 2))(conv4), MaxPooling2D(pool_size=(2, 2))(conv4)], mode='concat',
+                  concat_axis=1)
 
     conv5 = Convolution2D(512, 3, 3, border_mode='same', init='he_uniform')(pool4)
     conv5 = BatchNormalization()(conv5)
@@ -234,22 +233,10 @@ def train_and_predict():
     imgs_train = imgs_train.astype('float32')
 
     print('[{}] Creating validation set...'.format(str(datetime.datetime.now())))
-    # X_train, X_val, y_train, y_val = _train_val_split(imgs_train, imgs_mask_train)
+    X_train, X_val, y_train, y_val = _train_val_split(imgs_train, imgs_mask_train)
 
-    print('[{}] Getting extra data...'.format(str(datetime.datetime.now())))
-    # extra_x, extra_y = extra_data()
-
-    # X_train = np.vstack([X_train, extra_x[:4000, :, :, :]])
-    # X_val = np.vstack([X_val, extra_x[4000:, :, :, :]])
-
-    X_train = imgs_train
-    X_train = np.vstack([X_train, extra_x])
-    # X_val = np.vstack([X_val, extra_x[4000:, :, :, :]])
-
-    y_train = imgs_mask_train
-
-    print('[{}] Augmenting train...'.format(str(datetime.datetime.now())))
-    X_train, y_train = _add_transformations(X_train, y_train)
+    # print('[{}] Augmenting train...'.format(str(datetime.datetime.now())))
+    # X_train, y_train = _add_transformations(X_train, y_train)
     # print('[{}] Augmenting val...'.format(str(datetime.datetime.now())))
     # X_val, y_val = _add_transformations(X_train, y_train)
     # print('[{}] Augmenting test...'.format(str(datetime.datetime.now())))
@@ -263,23 +250,17 @@ def train_and_predict():
     # X_test -= mean
     # X_test /= std  # We can probably live without this.
     # X_test /= 255  # We can probably live without this.
-    # X_val -= mean
+    X_val -= mean
     # X_val /= std  # We can probably live without this.
-    # X_val /= 255  # We can probably live without this.
+    X_val /= 255  # We can probably live without this.
 
-    # y_train = (y_train.astype(np.float32) / 255)#.astype(int).astype(float)  # scale masks to [0, 1]
-
-    y_train = np.vstack([y_train, extra_y])
-
+    y_train = (y_train.astype(np.float32) / 255).astype(int).astype(float)  # scale masks to [0, 1]
     # y_test = (y_test.astype(np.float32) / 255).astype(int).astype(float)    # scale masks to [0, 1]
-
-    # y_val = (y_val.astype(np.float32) / 255)  # .astype(int).astype(float)  # scale masks to [0, 1]
-    # y_val = np.vstack([y_val, extra_y[4000:, :, :, :]]).astype(int).astype(float)
-
+    y_val = (y_val.astype(np.float32) / 255).astype(int).astype(float)      # scale masks to [0, 1]
 
     print
-    print '[{}] Num train non zero masks...'.format(np.mean((np.mean(y_train, (2, 3)) > 0).astype(int).flatten()))
-    # print '[{}] Num val non zero masks...'.format(np.mean((np.mean(y_val, (2, 3)) > 0).astype(int).flatten()))
+    print '[{}] Num train zero masks...'.format(np.mean((np.mean(y_train, (2, 3)) == 0).astype(int).flatten()))
+    print '[{}] Num val zero masks...'.format(np.mean((np.mean(y_val, (2, 3)) == 0).astype(int).flatten()))
     # print '[{}] Num test non zero masks...'.format(np.mean((np.mean(y_test, (2, 3)) > 0).astype(int).flatten()))
 
     print('[{}] Creating and compiling model...'.format(str(datetime.datetime.now())))
@@ -294,7 +275,7 @@ def train_and_predict():
               nb_epoch=20,
               verbose=1,
               shuffle=True,
-              # validation_data=(X_val, y_val),
+              validation_data=(X_val, y_val),
               # callbacks=[model_checkpoint]
               )
 

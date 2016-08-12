@@ -9,7 +9,7 @@ Finds similar images assigns to these clusters of images max mask
 import networkx as nx
 import os
 import pandas as pd
-
+from tqdm import tqdm
 from PIL import Image
 import glob
 import pandas as pd
@@ -36,7 +36,7 @@ i = 0
 print('-'*30)
 print('Creating training images...')
 print('-'*30)
-for image_name in images:
+for image_name in tqdm(images):
     if 'mask' in image_name:
         continue
     image_mask_name = image_name.split('.')[0] + '_mask.tif'
@@ -64,7 +64,7 @@ train['image_num'] = map(lambda x: int(x.split('.')[0].split('_')[1]), train_ids
 
 imgs_flat = np.reshape(imgs, (5635, 420*580))
 
-for subject in train['subject'].unque():
+for subject in train['subject'].unique():
     a = imgs_flat[(train['subject'] == subject).astype(int).values == 1]
     b = squareform(pdist(a))
 

@@ -1,8 +1,15 @@
+"""
+This will be different from other scripts:
+
+Data Augmentation.
+"""
+
+
 from __future__ import division
 import cv2
 import numpy as np
 from keras.models import Model
-from keras.layers import Input, merge, Convolution2D, MaxPooling2D, UpSampling2D, AveragePooling2D
+from keras.layers import Input, merge, Convolution2D, MaxPooling2D, UpSampling2D, Deconvolution2D
 
 from keras.layers.normalization import BatchNormalization
 
@@ -12,34 +19,52 @@ from keras import backend as K
 from sklearn.cross_validation import train_test_split
 
 from theano.tensor.nnet.nnet import binary_crossentropy
+from keras.callbacks import History
 
+import image_generator_xy
 
 from prepare_data import load_train_data, load_test_data
 import datetime
 import keras
+import pandas as pd
+
+import os
 # img_rows = 64
 # img_cols = 80
 
 # img_rows = 128
 # img_cols = 128
 
-img_rows = 80 * 2
-img_cols = 80 * 2
+img_rows = 80
+img_cols = 80
 
 smooth = 1.0
 
 
-def inverse_dice_coef(y_true, y_pred):
+def dice_coef_spec(y_true, y_pred):
+    y_true_f = K.batch_flatten(y_true)
+    y_pred_f = K.batch_flatten(y_pred)
+    intersection = 2. * K.sum(y_true_f * y_pred_f, axis=1, keepdims=True) + smooth
+    union = K.sum(y_true_f, axis=1, keepdims=True) + K.sum(y_pred_f, axis=1, keepdims=True) + smooth
+    return K.mean(intersection / union)
+
+
+def inverse_dice_coef_spec(y_true, y_pred):
     y_true_f = K.batch_flatten(1 - y_true)
     y_pred_f = K.batch_flatten(1 - y_pred)
     intersection = 2. * K.sum(y_true_f * y_pred_f, axis=1, keepdims=True) + smooth
     union = K.sum(y_true_f, axis=1, keepdims=True) + K.sum(y_pred_f, axis=1, keepdims=True) + smooth
-    return -K.mean(intersection / union)
+    return K.mean(intersection / union)
 
+# def dice_coef(y_true, y_pred):
+#     y_true_f = K.flatten(y_true)
+#     y_pred_f = K.flatten(y_pred)
+#     intersection = K.sum(y_true_f * y_pred_f)
+#     return (2. * intersection + smooth) / (K.sum(y_true_f) + K.sum(y_pred_f) + smooth)
 
-def dice_coef(y_true, y_pred):
-    y_true_f = K.flatten(y_true)
-    y_pred_f = K.flatten(y_pred)
+def inverse_dice_coef(y_true, y_pred):
+    y_true_f = K.flatten(1 - y_true)
+    y_pred_f = K.flatten(1 - y_pred)
     intersection = K.sum(y_true_f * y_pred_f)
     return (2. * intersection + smooth) / (K.sum(y_true_f) + K.sum(y_pred_f) + smooth)
 
@@ -64,12 +89,6 @@ def dice_coef(y_true, y_pred):
 #         if abs(percent_non_zero_true - percent_non_zero_pred) < 0.001:
 #             return i
 
-def extra_data():
-    imgs_test, imgs_id_test = load_test_data()
-    imgs_test_mask = np.load('imgs_mask_test.npy')
-
-    return preprocess(imgs_test), preprocess(imgs_test_mask)
-
 
 def dice_coef_np(y_true, y_pred, a):
     result = 0
@@ -82,7 +101,13 @@ def dice_coef_np(y_true, y_pred, a):
 
 
 def dice_coef_loss(y_true, y_pred):
-    return 1 - dice_coef(y_true, y_pred) + binary_crossentropy(y_pred, y_true)
+    return 1 - inverse_dice_coef(y_true, y_pred) + binary_crossentropy(y_pred, y_true)
+
+def dice_coef_spec_loss(y_true, y_pred):
+    return 1 - dice_coef_spec(y_true, y_pred) + binary_crossentropy(y_pred, y_true)
+
+def inverse_dice_coef_loss(y_true, y_pred):
+    return 1 - inverse_dice_coef_spec(y_true, y_pred) + binary_crossentropy(y_pred, y_true)
 
 
 def get_unet():
@@ -93,6 +118,7 @@ def get_unet():
     conv1 = Convolution2D(32, 3, 3, border_mode='same', init='he_uniform')(conv1)
     conv1 = BatchNormalization()(conv1)
     conv1 = keras.layers.advanced_activations.PReLU(init='zero', weights=None)(conv1)
+
     pool1 = MaxPooling2D(pool_size=(2, 2))(conv1)
 
     conv2 = Convolution2D(64, 3, 3, border_mode='same', init='he_uniform')(pool1)
@@ -161,8 +187,6 @@ def get_unet():
 
     model = Model(input=inputs, output=conv10)
 
-    model.compile(optimizer=Adam(lr=1e-5), loss=dice_coef_loss, metrics=[dice_coef, 'binary_crossentropy'])
-
     return model
 
 
@@ -171,31 +195,6 @@ def preprocess(imgs):
     for i in range(imgs.shape[0]):
         imgs_p[i, 0] = cv2.resize(imgs[i, 0], (img_cols, img_rows), interpolation=cv2.INTER_CUBIC)
     return imgs_p
-
-
-def _add_transformations(X, y):
-
-    X0 = np.ndarray(X.shape)
-    y0 = np.ndarray(y.shape)
-
-    X1 = np.ndarray(X.shape)
-    y1 = np.ndarray(y.shape)
-
-    X2 = np.ndarray(X.shape)
-    y2 = np.ndarray(y.shape)
-
-    for i in range((X.shape[0])):
-        X0[i, 0] = cv2.flip(X[i, 0], 0)
-        y0[i, 0] = cv2.flip(y[i, 0], 0)
-
-        X1[i, 0] = cv2.flip(X[i, 0], 1)
-        y1[i, 0] = cv2.flip(y[i, 0], 1)
-
-        X2[i, 0] = cv2.flip(cv2.flip(X[i, 0], 0), 1)
-        y2[i, 0] = cv2.flip(cv2.flip(y[i, 0], 0), 1)
-
-    return np.vstack([X, X0, X1, X2]), np.vstack([y, y0, y1, y2])
-    # return np.vstack([X, X0, X1]), np.vstack([y, y0, y1])
 
 
 def _train_val_split(imgs_train, imgs_mask_train):
@@ -213,14 +212,29 @@ def _train_val_split(imgs_train, imgs_mask_train):
     # Subtracting test set
     X_train, X_test, y_train, y_test = train_test_split(imgs_train, imgs_mask_train, stratify=mean_mask, test_size=0.2)
 
-    # X_train, X_validation, y_train, y_validation = train_test_split(X_train,
-    #                                                                 y_train,
-    #                                                                 stratify=((np.mean(y_train, (2, 3)) == 0)
-    #                                                                           .astype(int)
-    #                                                                           .flatten()),
-    #                                                                 test_size=0.25)
-
     return X_train, X_test, y_train, y_test
+
+
+def save_model(model, cross):
+    json_string = model.to_json()
+    if not os.path.isdir('cache'):
+        os.mkdir('cache')
+    json_name = 'architecture_' + cross + '.json'
+    weight_name = 'model_weights_' + cross + '.h5'
+    open(os.path.join('cache', json_name), 'w').write(json_string)
+    model.save_weights(os.path.join('cache', weight_name), overwrite=True)
+
+
+def save_history(history, suffix):
+    filename = 'history/history_' + suffix + '.csv'
+    pd.DataFrame(history.history).to_csv(filename, index=False)
+
+
+def extra_data():
+    imgs_test, imgs_id_test = load_test_data()
+    imgs_test_mask = np.load('masks/imgs_mask_test_2016-08-09-20-32.npy')
+
+    return preprocess(imgs_test), preprocess(imgs_test_mask)
 
 
 def train_and_predict():
@@ -234,52 +248,50 @@ def train_and_predict():
     imgs_train = imgs_train.astype('float32')
 
     print('[{}] Creating validation set...'.format(str(datetime.datetime.now())))
-    # X_train, X_val, y_train, y_val = _train_val_split(imgs_train, imgs_mask_train)
+    # X_train = imgs_train
+    # y_train = imgs_mask_train
+    X_train, X_val, y_train, y_val = _train_val_split(imgs_train, imgs_mask_train)
 
-    print('[{}] Getting extra data...'.format(str(datetime.datetime.now())))
+    # print('[{}] Getting extra data...'.format(str(datetime.datetime.now())))
     # extra_x, extra_y = extra_data()
-
+    #
     # X_train = np.vstack([X_train, extra_x[:4000, :, :, :]])
     # X_val = np.vstack([X_val, extra_x[4000:, :, :, :]])
 
-    X_train = imgs_train
-    X_train = np.vstack([X_train, extra_x])
-    # X_val = np.vstack([X_val, extra_x[4000:, :, :, :]])
 
-    y_train = imgs_mask_train
-
-    print('[{}] Augmenting train...'.format(str(datetime.datetime.now())))
-    X_train, y_train = _add_transformations(X_train, y_train)
-    # print('[{}] Augmenting val...'.format(str(datetime.datetime.now())))
-    # X_val, y_val = _add_transformations(X_train, y_train)
-    # print('[{}] Augmenting test...'.format(str(datetime.datetime.now())))
-    # X_test, y_test = _add_transformations(X_train, y_train)
+    datagen = image_generator_xy.ImageDataGenerator(
+        featurewise_center=False,
+        featurewise_std_normalization=False,
+        rotation_range=5,
+        # width_shift_range=0.3,
+        # height_shift_range=0.3,
+        # zoom_range=0.3,
+        # channel_shift_range=30,
+        # shear_range=0.3,
+        # zca_whitening=True,
+        horizontal_flip=True,
+        vertical_flip=True
+    )
 
     mean = np.mean(X_train)  # mean for data centering
 
     X_train -= mean
-    # X_train /= std  # We can probably live without this.
     X_train /= 255  # We can probably live without this.
     # X_test -= mean
-    # X_test /= std  # We can probably live without this.
     # X_test /= 255  # We can probably live without this.
-    # X_val -= mean
-    # X_val /= std  # We can probably live without this.
-    # X_val /= 255  # We can probably live without this.
+    X_val -= mean
+    X_val /= 255  # We can probably live without this.
 
-    # y_train = (y_train.astype(np.float32) / 255)#.astype(int).astype(float)  # scale masks to [0, 1]
-
-    y_train = np.vstack([y_train, extra_y])
-
+    y_train = (y_train.astype(np.float32) / 255).astype(int).astype(float)  # scale masks to [0, 1]
     # y_test = (y_test.astype(np.float32) / 255).astype(int).astype(float)    # scale masks to [0, 1]
+    y_val = (y_val.astype(np.float32) / 255).astype(int).astype(float)      # scale masks to [0, 1]
 
-    # y_val = (y_val.astype(np.float32) / 255)  # .astype(int).astype(float)  # scale masks to [0, 1]
+    # y_train = np.vstack([y_train, extra_y[:4000, :, :, :]]).astype(int).astype(float)
     # y_val = np.vstack([y_val, extra_y[4000:, :, :, :]]).astype(int).astype(float)
-
 
     print
     print '[{}] Num train non zero masks...'.format(np.mean((np.mean(y_train, (2, 3)) > 0).astype(int).flatten()))
-    # print '[{}] Num val non zero masks...'.format(np.mean((np.mean(y_val, (2, 3)) > 0).astype(int).flatten()))
+    print '[{}] Num val non zero masks...'.format(np.mean((np.mean(y_val, (2, 3)) > 0).astype(int).flatten()))
     # print '[{}] Num test non zero masks...'.format(np.mean((np.mean(y_test, (2, 3)) > 0).astype(int).flatten()))
 
     print('[{}] Creating and compiling model...'.format(str(datetime.datetime.now())))
@@ -287,24 +299,46 @@ def train_and_predict():
     model = get_unet()
     # model_checkpoint = ModelCheckpoint('unet.hdf5', monitor='loss', save_best_only=True)
 
+    print('[{}] Fitting generator...'.format(str(datetime.datetime.now())))
+
+    history = History()
+
+    datagen.fit(X_train)
+
     print('[{}] Fitting model...'.format(str(datetime.datetime.now())))
+    batch_size = 24
+    nb_epoch = 20
 
-    model.fit(X_train, y_train,
-              batch_size=8,
-              nb_epoch=20,
-              verbose=1,
-              shuffle=True,
-              # validation_data=(X_val, y_val),
-              # callbacks=[model_checkpoint]
-              )
+    model.compile(optimizer=Adam(lr=1e-3), loss=dice_coef_spec_loss, metrics=[dice_coef_spec, 'binary_crossentropy'])
+    model.fit_generator(datagen.flow(X_train,
+                                     y_train,
+                                     batch_size=batch_size,
+                                     shuffle=True),
+                                     nb_epoch=nb_epoch,
+                                     verbose=1,
+                                     validation_data=(X_val, y_val),
+                                     samples_per_epoch=len(X_train),
+                                     callbacks=[history],
+                                     # shuffle=True
+                                     )
 
-    # y_pred = model.predict(X_test)
-    #
-    # for a in np.arange(0, 1, 0.1):
-    #     score = dice_coef_np(y_test, y_pred, a)
-    #     print '[{date}] a = {a}. Score = {score}'.format(date=str(datetime.datetime.now()),
-    #                                                                                 score=score,
-    #                                                                                 a=a)
+    # model.compile(optimizer=Adam(lr=1e-5), loss=dice_coef_loss, metrics=[dice_coef, 'binary_crossentropy'])
+    # model.fit_generator(datagen.flow(X_train,
+    #                                  y_train,
+    #                                  batch_size=batch_size,
+    #                                  shuffle=True),
+    #                     nb_epoch=nb_epoch,
+    #                     verbose=1,
+    #                     validation_data=(X_val, y_val),
+    #                     samples_per_epoch=len(X_train),
+    #                     callbacks=[history],
+    #                     # shuffle=True
+    #                     )
+
+    now = datetime.datetime.now()
+    suffix = str(now.strftime("%Y-%m-%d-%H-%M"))
+    save_model(model, "{batch}_{epoch}_{suffix}".format(batch=batch_size, epoch=nb_epoch, suffix=suffix))
+
     print
     print('[{}] Loading and preprocessing test data...'.format(str(datetime.datetime.now())))
 
@@ -314,15 +348,15 @@ def train_and_predict():
     imgs_test = imgs_test.astype('float32')
     imgs_test -= mean
     imgs_test /= 255
-    #
-    # print('[{}] Loading saved weights...'.format(str(datetime.datetime.now())))
-    #
-    # model.load_weights('unet.hdf5')
 
     print('[{}] Predicting masks on test data...'.format(str(datetime.datetime.now())))
 
     imgs_mask_test = model.predict(imgs_test, verbose=1)
-    np.save('imgs_mask_test.npy', imgs_mask_test)
+    np.save('masks/imgs_mask_test_{suffix}.npy'.format(suffix=suffix), imgs_mask_test)
+
+    suffix = str(now.strftime("%Y-%m-%d-%H-%M"))
+    print '[{}] Saving history'.format(str(datetime.datetime.now()))
+    save_history(history, suffix)
 
 
 if __name__ == '__main__':

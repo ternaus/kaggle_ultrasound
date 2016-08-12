@@ -6,7 +6,7 @@ import datetime
 
 import cv2
 import h5py
-
+from tqdm import tqdm
 data_path = '../data'
 
 image_rows = 420
@@ -28,7 +28,7 @@ def create_train_data():
 
     train_ids = []
 
-    for image_name in images:
+    for image_name in tqdm(images):
         if 'mask' in image_name:
             continue
 
@@ -48,8 +48,6 @@ def create_train_data():
         imgs[i] = img
         imgs_mask[i] = img_mask
 
-        if i % 100 == 0:
-            print('Done: {0}/{1} images'.format(i, total))
         i += 1
     print('[{}] Loading done.'.format(str(datetime.datetime.now())))
 
@@ -71,8 +69,8 @@ def load_train_data():
     train_ids = np.array(f['train_ids'])
     f.close()
 
-    return imgs_train[:, 0, :400, 100:500].reshape(5634, 1, 400, 400), \
-           imgs_mask_train[:, 0, :400, 100:500].reshape(5634, 1, 400, 400), \
+    return imgs_train[:, 0, :400, 100:500].reshape(imgs_train.shape[0], 1, 400, 400), \
+           imgs_mask_train[:, 0, :400, 100:500].reshape(imgs_mask_train.shape[0], 1, 400, 400), \
            train_ids
 
 
@@ -88,7 +86,7 @@ def create_test_data():
 
     print('[{}] Creating test images...'.format(str(datetime.datetime.now())))
 
-    for image_name in images:
+    for image_name in tqdm(images):
         img_id = int(image_name.split('.')[0])
         img = cv2.imread(os.path.join(train_data_path, image_name), cv2.IMREAD_GRAYSCALE)
 
@@ -97,8 +95,6 @@ def create_test_data():
         imgs[i] = img
         imgs_id[i] = img_id
 
-        if i % 100 == 0:
-            print('Done: {0}/{1} images'.format(i, total))
         i += 1
     print('Loading done.'.format(str(datetime.datetime.now())))
 
@@ -116,7 +112,7 @@ def load_test_data():
     imgs_test = np.array(f['test'])
     imgs_id = np.array(f['test_id'])
     f.close()
-    return imgs_test[:, 0, :400, 100:500].reshape(5508, 1, 400, 400), imgs_id
+    return imgs_test[:, 0, :400, 100:500].reshape(imgs_test.shape[0], 1, 400, 400), imgs_id
 
 if __name__ == '__main__':
     create_train_data()
