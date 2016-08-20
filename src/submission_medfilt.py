@@ -7,19 +7,37 @@ from tqdm import tqdm
 from prepare_data import image_cols, image_rows, load_test_data
 import h5py
 
+# def prep(img):
+#     img = img.astype('float32')
+#     # if np.sum(img.astype(int)) < 340:
+#     #     return np.zeros(img.shape)
+#     img = cv2.threshold(img, 0.5, 1., cv2.THRESH_BINARY)[1].astype(np.uint8)
+#     # img = cv2.resize(img, (image_cols, image_rows))
+#     # img = cv2.resize(img, (400, 400))
+#     img = cv2.resize(img, (400, 400))
+#     c = np.zeros((image_rows, image_cols))
+#
+#     # c[:400, 100:500] = img
+#     c[:400, 100:500] = img
+#
+#     return c
+
 def prep(img):
     img = img.astype('float32')
     # if np.sum(img.astype(int)) < 340:
     #     return np.zeros(img.shape)
-    img = cv2.threshold(img, 0.5, 1., cv2.THRESH_BINARY)[1].astype(np.uint8)
+    # img = cv2.threshold(img, 0.5, 1., cv2.THRESH_BINARY)[1].astype(np.uint8)
+    img = (img > 0.5).astype(np.uint8)
     # img = cv2.resize(img, (image_cols, image_rows))
     img = cv2.resize(img, (400, 400))
+
+    # img = cv2.resize(img, (300, 300))
     c = np.zeros((image_rows, image_cols))
 
-    c[:400, 100:500] = img
+    if np.sum(img) > 2500:
+        c[:400, 100:500] = img
 
     return c
-
 
 def run_length_enc(label):
     from itertools import chain
@@ -47,21 +65,7 @@ def submission():
     imgs_test = np.array(f['test_mask'])
     f.close()
 
-    # imgs_test = np.load('imgs_mask_test.npy')
 
-    #
-    # X = []
-    # for a in np.arange(0, 1, 0.1):
-    #     for cut in range(10, 900, 10):
-    #         X += [(a, cut, np.mean(np.sum((imgs_test > a).astype(int), (2, 3)) >= cut))]
-    #
-    # pd.DataFrame(X, columns=['a', 'cut', 'nonzero_percent']).to_csv('df.csv', index=False)
-
-    # print np.mean(np.sum((imgs_test > 0).astype(int), (2, 3)) > 340) - 0.412599822538
-    # print np.mean(np.mean((imgs_test > 0.5).astype(int), (2, 3)) == 0)
-    #
-    # import sys
-    # sys.exit()
 
     argsort = np.argsort(imgs_id_test)
     imgs_id_test = imgs_id_test[argsort]
@@ -78,7 +82,7 @@ def submission():
         rles.append(rle)
         ids.append(imgs_id_test[i])
 
-    file_name = 'submissions/submission3b.csv'
+    file_name = 'submissions/blend2_15_2500.csv'
 
     df = pd.DataFrame()
     df['img'] = imgs_id_test

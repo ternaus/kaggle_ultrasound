@@ -11,8 +11,22 @@ import os
 from joblib import Parallel, delayed
 import time
 import numpy as np
+#
+#
+# imgs_test1 = np.load('split5/imgs_mask_test_2016-08-15-01-38.npy')
+# imgs_test2 = np.load('split5/imgs_mask_test_2016-08-15-08-44.npy')
+# imgs_test3 = np.load('split5/imgs_mask_test_2016-08-15-06-37.npy')
+# #
+# imgs_test_a = (imgs_test1 + imgs_test2 + imgs_test3) / 3
+# imgs_test_a = np.load('masks/imgs_mask_test_2016-08-17-00-53.npy')
+imgs_test_b = np.load('masks/imgs_mask_test_2016-08-14-22-41.npy')
+imgs_test_c = np.load('masks/imgs_mask_test_2016-08-12-07-00.npy')
+# imgs_test_e = np.load('masks/imgs_mask_test_2016-08-15-21-35.npy')
+#
+# mask = (imgs_test_a + imgs_test_b + imgs_test_c + imgs_test_e) / 4
+mask = (imgs_test_b + imgs_test_c) / 2
 
-mask = np.load('../src/masks/imgs_mask_test_2016-08-12-07-00.npy')
+# mask = np.load('masks/imgs_mask_test_2016-08-17-00-53.npy')
 
 data_path = '../data'
 kernel = 15

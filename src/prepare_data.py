@@ -73,6 +73,10 @@ def load_train_data():
            imgs_mask_train[:, 0, :400, 100:500].reshape(imgs_mask_train.shape[0], 1, 400, 400), \
            train_ids
 
+    # return imgs_train[:, 0, :300, 180:480].reshape(imgs_train.shape[0], 1, 300, 300), \
+    #        imgs_mask_train[:, 0, :300, 180:480].reshape(imgs_mask_train.shape[0], 1, 300, 300), \
+    #        train_ids
+
 
 def create_test_data():
     train_data_path = os.path.join(data_path, 'test')
@@ -113,6 +117,8 @@ def load_test_data():
     imgs_id = np.array(f['test_id'])
     f.close()
     return imgs_test[:, 0, :400, 100:500].reshape(imgs_test.shape[0], 1, 400, 400), imgs_id
+
+    # return imgs_test[:, 0, :300, 180:480].reshape(imgs_test.shape[0], 1, 300, 300), imgs_id
 
 if __name__ == '__main__':
     create_train_data()

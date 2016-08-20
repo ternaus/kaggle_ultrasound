@@ -17,6 +17,7 @@ import cv2
 import os
 import numpy as  np
 from pylab import *
+from tqdm import tqdm
 from scipy.cluster.hierarchy import dendrogram, linkage
 from scipy.spatial.distance import pdist, squareform
 
@@ -49,8 +50,6 @@ for image_name in tqdm(images):
     imgs[i] = img
     imgs_mask[i] = img_mask
 
-    if i % 100 == 0:
-        print('Done: {0}/{1} images'.format(i, total))
     i += 1
 print('Loading done.')
 

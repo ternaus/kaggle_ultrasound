@@ -9,11 +9,11 @@ from __future__ import division
 import cv2
 import numpy as np
 from keras.models import Model
-from keras.layers import Input, merge, Convolution2D, MaxPooling2D, UpSampling2D, Deconvolution2D
+from keras.layers import Input, merge, Convolution2D, MaxPooling2D, UpSampling2D, ZeroPadding2D, Deconvolution2D
 
 from keras.layers.normalization import BatchNormalization
 
-from keras.optimizers import Adam
+from keras.optimizers import Adam, Nadam
 from keras.callbacks import ModelCheckpoint, LearningRateScheduler
 from keras import backend as K
 from sklearn.cross_validation import train_test_split
@@ -22,7 +22,7 @@ from theano.tensor.nnet.nnet import binary_crossentropy
 from keras.callbacks import History
 
 import image_generator_xy
-
+from keras.models import Sequential
 from prepare_data import load_train_data, load_test_data
 import datetime
 import keras
@@ -35,8 +35,11 @@ import os
 # img_rows = 128
 # img_cols = 128
 
-img_rows = 80
-img_cols = 80
+img_rows = 80 * 2
+img_cols = 80 * 2
+
+# img_rows = 64 * 2
+# img_cols = 64 * 2
 
 smooth = 1.0
 
@@ -48,6 +51,12 @@ def dice_coef_spec(y_true, y_pred):
     union = K.sum(y_true_f, axis=1, keepdims=True) + K.sum(y_pred_f, axis=1, keepdims=True) + smooth
     return K.mean(intersection / union)
 
+def dice_coef(y_true, y_pred):
+    y_true_f = K.flatten(y_true)
+    y_pred_f = K.flatten(y_pred)
+    intersection = K.sum(y_true_f * y_pred_f)
+    return (2. * intersection + smooth) / (K.sum(y_true_f) + K.sum(y_pred_f) + smooth)
+
 
 def inverse_dice_coef_spec(y_true, y_pred):
     y_true_f = K.batch_flatten(1 - y_true)
@@ -56,12 +65,6 @@ def inverse_dice_coef_spec(y_true, y_pred):
     union = K.sum(y_true_f, axis=1, keepdims=True) + K.sum(y_pred_f, axis=1, keepdims=True) + smooth
     return K.mean(intersection / union)
 
-# def dice_coef(y_true, y_pred):
-#     y_true_f = K.flatten(y_true)
-#     y_pred_f = K.flatten(y_pred)
-#     intersection = K.sum(y_true_f * y_pred_f)
-#     return (2. * intersection + smooth) / (K.sum(y_true_f) + K.sum(y_pred_f) + smooth)
-
 def inverse_dice_coef(y_true, y_pred):
     y_true_f = K.flatten(1 - y_true)
     y_pred_f = K.flatten(1 - y_pred)
@@ -69,45 +72,263 @@ def inverse_dice_coef(y_true, y_pred):
     return (2. * intersection + smooth) / (K.sum(y_true_f) + K.sum(y_pred_f) + smooth)
 
 
-# def inverse_dice_coef(y_true, y_pred):
-#     y_true_f = K.flatten(1 - y_true)
-#     y_pred_f = K.flatten(1 - y_pred)
-#     intersection = K.sum(y_true_f * y_pred_f)
-#     return -(2. * intersection + smooth) / (K.sum(y_true_f) + K.sum(y_pred_f) + smooth)
-#
-#
-# def _find_threashold(y_true, y_pred, a):
-#     """Heavy penalty for predicting even one pixel when there is no mask. Train/test sampled randomly =>
-#     percent of zero mask should be similar in train, validation and test =>
-#      we need to zero out masks in such a way that percent of zero  masks in prediction would be equal
-#      to percent of zero masks in train
-#     """
-#     percent_non_zero_true = np.mean((np.mean(y_true.astype(int), (2, 3)) > 0))
-#     num_pixels = np.prod(y_pred[0].shape)
-#     for i in range(num_pixels):
-#         percent_non_zero_pred = np.mean(np.sum((y_pred > a).astype(int), (2, 3)) > i)
-#         if abs(percent_non_zero_true - percent_non_zero_pred) < 0.001:
-#             return i
-
-
-def dice_coef_np(y_true, y_pred, a):
+def dice_coef_np(y_true, y_pred):
     result = 0
     for i in range(y_true.shape[0]):
-        y_true_f = (y_true[i][0].flatten() > a).astype(int)
-        y_pred_f = (y_pred[i][0].flatten() > a).astype(int)
+        y_true_f = y_true[i][0].flatten().astype(int)
+        y_pred_f = y_pred[i][0].flatten().astype(int)
 
         result += (2.0 * np.dot(y_true_f, y_pred_f) + smooth) / (np.sum(y_true_f) + np.sum(y_pred_f) + smooth)
     return result / y_true.shape[0]
 
 
 def dice_coef_loss(y_true, y_pred):
-    return 1 - inverse_dice_coef(y_true, y_pred) + binary_crossentropy(y_pred, y_true)
+    return 1 - dice_coef(y_true, y_pred) + binary_crossentropy(y_pred, y_true)
 
 def dice_coef_spec_loss(y_true, y_pred):
     return 1 - dice_coef_spec(y_true, y_pred) + binary_crossentropy(y_pred, y_true)
 
 def inverse_dice_coef_loss(y_true, y_pred):
     return 1 - inverse_dice_coef_spec(y_true, y_pred) + binary_crossentropy(y_pred, y_true)
+
+
+def vgg_fcn():
+    model = Sequential()
+    model.add(ZeroPadding2D((1, 1), input_shape=(1,
+                                                 img_rows, img_cols)))
+
+    model.add(Convolution2D(64, 3, 3, init='he_uniform'))
+    # model.add(BatchNormalization())
+    # model.add(keras.layers.advanced_activations.PReLU(init='zero', weights=None))
+    model.add(keras.layers.advanced_activations.ELU())
+    model.add(ZeroPadding2D((1, 1)))
+    model.add(Convolution2D(64, 3, 3, init='he_uniform'))
+    model.add(BatchNormalization())
+    model.add(keras.layers.advanced_activations.ELU())
+    # model.add(keras.layers.advanced_activations.PReLU(init='zero', weights=None))
+    model.add(MaxPooling2D((2, 2), strides=(2, 2)))
+
+    model.add(ZeroPadding2D((1, 1)))
+    model.add(Convolution2D(128, 3, 3, init='he_uniform'))
+    # model.add(BatchNormalization())
+    model.add(keras.layers.advanced_activations.ELU())
+    # model.add(keras.layers.advanced_activations.PReLU(init='zero', weights=None))
+    model.add(ZeroPadding2D((1, 1)))
+    model.add(Convolution2D(128, 3, 3, init='he_uniform'))
+    model.add(BatchNormalization())
+    model.add(keras.layers.advanced_activations.ELU())
+    # model.add(keras.layers.advanced_activations.PReLU(init='zero', weights=None))
+    model.add(MaxPooling2D((2, 2), strides=(2, 2)))
+
+    model.add(ZeroPadding2D((1, 1)))
+    model.add(Convolution2D(256, 3, 3, init='he_uniform'))
+    # model.add(BatchNormalization())
+    model.add(keras.layers.advanced_activations.ELU())
+    # model.add(keras.layers.advanced_activations.PReLU(init='zero', weights=None))
+    model.add(ZeroPadding2D((1, 1)))
+    model.add(Convolution2D(256, 3, 3, init='he_uniform'))
+    # model.add(BatchNormalization())
+    model.add(keras.layers.advanced_activations.ELU())
+    # model.add(keras.layers.advanced_activations.PReLU(init='zero', weights=None))
+    model.add(ZeroPadding2D((1, 1)))
+    model.add(Convolution2D(256, 3, 3, init='he_uniform'))
+    model.add(BatchNormalization())
+    model.add(keras.layers.advanced_activations.ELU())
+    # model.add(keras.layers.advanced_activations.PReLU(init='zero', weights=None))
+    model.add(MaxPooling2D((2, 2), strides=(2, 2)))
+
+    model.add(ZeroPadding2D((1, 1)))
+    model.add(Convolution2D(512, 3, 3, init='he_uniform'))
+    # model.add(BatchNormalization())
+    model.add(keras.layers.advanced_activations.ELU())
+    # model.add(keras.layers.advanced_activations.PReLU(init='zero', weights=None))
+    model.add(ZeroPadding2D((1, 1)))
+    model.add(Convolution2D(512, 3, 3, init='he_uniform'))
+    # model.add(BatchNormalization())
+    model.add(keras.layers.advanced_activations.ELU())
+    # model.add(keras.layers.advanced_activations.PReLU(init='zero', weights=None))
+    model.add(ZeroPadding2D((1, 1)))
+    model.add(Convolution2D(512, 3, 3, init='he_uniform'))
+    model.add(BatchNormalization())
+    model.add(keras.layers.advanced_activations.ELU())
+    # model.add(keras.layers.advanced_activations.PReLU(init='zero', weights=None))
+    model.add(MaxPooling2D((2, 2), strides=(2, 2)))
+
+    # model.add(ZeroPadding2D((1, 1)))
+    # model.add(Convolution2D(512, 3, 3, init='he_uniform'))
+    # model.add(BatchNormalization())
+    # model.add(keras.layers.advanced_activations.PReLU(init='zero', weights=None))
+    # model.add(ZeroPadding2D((1, 1)))
+    # model.add(Convolution2D(512, 3, 3, init='he_uniform'))
+    # model.add(BatchNormalization())
+    # model.add(keras.layers.advanced_activations.PReLU(init='zero', weights=None))
+    # model.add(ZeroPadding2D((1, 1)))
+    # model.add(Convolution2D(512, 3, 3, init='he_uniform'))
+    # model.add(BatchNormalization())
+    # model.add(keras.layers.advanced_activations.PReLU(init='zero', weights=None))
+    # model.add(MaxPooling2D((2, 2), strides=(2, 2)))
+
+    # model.add(UpSampling2D(size=(32, 32)))
+    model.add(UpSampling2D(size=(16, 16)))
+    model.add(Convolution2D(1, 1, 1, activation='sigmoid', init='he_uniform'))
+
+    print model.summary()
+
+    return model
+
+
+def get_unet3():
+    inputs = Input((1, img_rows, img_cols))
+    conv1 = Convolution2D(32, 3, 3, border_mode='same', init='he_normal')(inputs)
+    # conv1 = BatchNormalization()(conv1)
+    conv1 = keras.layers.advanced_activations.ELU()(conv1)
+    conv1 = Convolution2D(32, 3, 3, border_mode='same', init='he_normal')(conv1)
+    conv1 = BatchNormalization()(conv1)
+    conv1 = keras.layers.advanced_activations.ELU()(conv1)
+
+    pool1 = MaxPooling2D(pool_size=(2, 2))(conv1)
+
+    conv2 = Convolution2D(64, 3, 3, border_mode='same', init='he_normal')(pool1)
+    # conv2 = BatchNormalization()(conv2)
+    conv2 = keras.layers.advanced_activations.ELU()(conv2)
+    conv2 = Convolution2D(64, 3, 3, border_mode='same', init='he_normal')(conv2)
+    conv2 = BatchNormalization()(conv2)
+    conv2 = keras.layers.advanced_activations.ELU()(conv2)
+    pool2 = MaxPooling2D(pool_size=(2, 2))(conv2)
+
+    conv3 = Convolution2D(128, 3, 3, border_mode='same', init='he_normal')(pool2)
+    # conv3 = BatchNormalization()(conv3)
+    conv3 = keras.layers.advanced_activations.ELU()(conv3)
+    conv3 = Convolution2D(128, 3, 3, border_mode='same', init='he_normal')(conv3)
+    conv3 = BatchNormalization()(conv3)
+    conv3 = keras.layers.advanced_activations.ELU()(conv3)
+    pool3 = MaxPooling2D(pool_size=(2, 2))(conv3)
+
+    conv4 = Convolution2D(256, 3, 3, border_mode='same', init='he_normal')(pool3)
+    # conv4 = BatchNormalization()(conv4)
+    conv4 = keras.layers.advanced_activations.ELU()(conv4)
+    conv4 = Convolution2D(256, 3, 3, border_mode='same', init='he_normal')(conv4)
+    conv4 = BatchNormalization()(conv4)
+    conv4 = keras.layers.advanced_activations.ELU()(conv4)
+    pool4 = MaxPooling2D(pool_size=(2, 2))(conv4)
+
+    conv5 = Convolution2D(512, 3, 3, border_mode='same', init='he_normal')(pool4)
+    # conv5 = BatchNormalization()(conv5)
+    conv5 = keras.layers.advanced_activations.ELU()(conv5)
+    conv5 = Convolution2D(512, 3, 3, border_mode='same', init='he_normal')(conv5)
+    conv5 = BatchNormalization()(conv5)
+    conv5 = keras.layers.advanced_activations.ELU()(conv5)
+
+    up6 = merge([UpSampling2D(size=(2, 2))(conv5), conv4], mode='concat', concat_axis=1)
+    conv6 = Convolution2D(256, 3, 3, border_mode='same', init='he_normal')(up6)
+    # conv6 = BatchNormalization()(conv6)
+    conv6 = keras.layers.advanced_activations.ELU()(conv6)
+    conv6 = Convolution2D(256, 3, 3, border_mode='same', init='he_normal')(conv6)
+    conv6 = BatchNormalization()(conv6)
+    conv6 = keras.layers.advanced_activations.ELU()(conv6)
+
+    up7 = merge([UpSampling2D(size=(2, 2))(conv6), conv3], mode='concat', concat_axis=1)
+    conv7 = Convolution2D(128, 3, 3, border_mode='same', init='he_normal')(up7)
+    # conv7 = BatchNormalization()(conv7)
+    conv7 = keras.layers.advanced_activations.ELU()(conv7)
+    conv7 = Convolution2D(128, 3, 3, border_mode='same', init='he_normal')(conv7)
+    conv7 = BatchNormalization()(conv7)
+    conv7 = keras.layers.advanced_activations.ELU()(conv7)
+
+    up8 = merge([UpSampling2D(size=(2, 2))(conv7), conv2], mode='concat', concat_axis=1)
+    conv8 = Convolution2D(64, 3, 3, border_mode='same', init='he_normal')(up8)
+    # conv8 = BatchNormalization()(conv8)
+    conv8 = keras.layers.advanced_activations.ELU()(conv8)
+    conv8 = Convolution2D(64, 3, 3, border_mode='same', init='he_normal')(conv8)
+    conv8 = BatchNormalization()(conv8)
+    conv8 = keras.layers.advanced_activations.ELU()(conv8)
+
+    up9 = merge([UpSampling2D(size=(2, 2))(conv8), conv1], mode='concat', concat_axis=1)
+    conv9 = Convolution2D(32, 3, 3, border_mode='same', init='he_normal')(up9)
+    # conv9 = BatchNormalization()(conv9)
+    conv9 = keras.layers.advanced_activations.ELU()(conv9)
+    conv9 = Convolution2D(32, 3, 3, border_mode='same', init='he_normal')(conv9)
+    conv9 = BatchNormalization()(conv9)
+    conv9 = keras.layers.advanced_activations.ELU()(conv9)
+    conv10 = Convolution2D(1, 1, 1, activation='sigmoid')(conv9)
+
+    model = Model(input=inputs, output=conv10)
+
+    return model
+
+
+def get_unet2():
+    inputs = Input((1, img_rows, img_cols))
+    conv1 = Convolution2D(32, 3, 3, border_mode='same', init='he_normal')(inputs)
+    # conv1 = BatchNormalization()(conv1)
+    conv1 = keras.layers.advanced_activations.ELU()(conv1)
+    conv1 = Convolution2D(32, 3, 3, border_mode='same', init='he_normal')(conv1)
+    conv1 = BatchNormalization()(conv1)
+    conv1 = keras.layers.advanced_activations.ELU()(conv1)
+    pool1 = MaxPooling2D(pool_size=(2, 2))(conv1)
+
+    conv2 = Convolution2D(64, 3, 3, border_mode='same', init='he_normal')(pool1)
+    # conv2 = BatchNormalization()(conv2)
+    conv2 = keras.layers.advanced_activations.ELU()(conv2)
+    conv2 = Convolution2D(64, 3, 3, border_mode='same', init='he_normal')(conv2)
+    conv2 = BatchNormalization()(conv2)
+    conv2 = keras.layers.advanced_activations.ELU()(conv2)
+    pool2 = MaxPooling2D(pool_size=(2, 2))(conv2)
+
+    conv3 = Convolution2D(128, 3, 3, border_mode='same', init='he_normal')(pool2)
+    # conv3 = BatchNormalization()(conv3)
+    conv3 = keras.layers.advanced_activations.ELU()(conv3)
+    conv3 = Convolution2D(128, 3, 3, border_mode='same', init='he_normal')(conv3)
+    conv3 = BatchNormalization()(conv3)
+    conv3 = keras.layers.advanced_activations.ELU()(conv3)
+    pool3 = MaxPooling2D(pool_size=(2, 2))(conv3)
+
+    conv4 = Convolution2D(256, 3, 3, border_mode='same', init='he_normal')(pool3)
+    # conv4 = BatchNormalization()(conv4)
+    conv4 = keras.layers.advanced_activations.ELU()(conv4)
+    conv4 = Convolution2D(256, 3, 3, border_mode='same', init='he_normal')(conv4)
+    conv4 = BatchNormalization()(conv4)
+    conv4 = keras.layers.advanced_activations.ELU()(conv4)
+    pool4 = MaxPooling2D(pool_size=(2, 2))(conv4)
+
+    conv5 = Convolution2D(512, 3, 3, border_mode='same', init='he_normal')(pool4)
+    conv5 = keras.layers.advanced_activations.ELU()(conv5)
+    conv5 = Convolution2D(512, 3, 3, border_mode='same', init='he_normal')(conv5)
+    conv5 = keras.layers.advanced_activations.ELU()(conv5)
+    conv5 = BatchNormalization()(conv5)
+
+    up6 = merge([UpSampling2D(size=(2, 2))(conv5), conv4], mode='concat', concat_axis=1)
+    conv6 = Convolution2D(256, 3, 3, border_mode='same', init='he_normal')(up6)
+    conv6 = keras.layers.advanced_activations.ELU()(conv6)
+    conv6 = Convolution2D(256, 3, 3, border_mode='same', init='he_normal')(conv6)
+    conv6 = keras.layers.advanced_activations.ELU()(conv6)
+    conv6 = BatchNormalization()(conv6)
+
+    up7 = merge([UpSampling2D(size=(2, 2))(conv6), conv3], mode='concat', concat_axis=1)
+    conv7 = Convolution2D(128, 3, 3, border_mode='same', init='he_normal')(up7)
+    conv7 = keras.layers.advanced_activations.ELU()(conv7)
+    conv7 = Convolution2D(128, 3, 3, border_mode='same', init='he_normal')(conv7)
+    conv7 = keras.layers.advanced_activations.ELU()(conv7)
+    conv7 = BatchNormalization()(conv7)
+
+    up8 = merge([UpSampling2D(size=(2, 2))(conv7), conv2], mode='concat', concat_axis=1)
+    conv8 = Convolution2D(64, 3, 3, border_mode='same', init='he_normal')(up8)
+    conv8 = keras.layers.advanced_activations.ELU()(conv8)
+    conv8 = Convolution2D(64, 3, 3, border_mode='same', init='he_normal')(conv8)
+    conv8 = keras.layers.advanced_activations.ELU()(conv8)
+    conv8 = BatchNormalization()(conv8)
+
+    up9 = merge([UpSampling2D(size=(2, 2))(conv8), conv1], mode='concat', concat_axis=1)
+    conv9 = Convolution2D(32, 3, 3, border_mode='same', init='he_normal')(up9)
+    conv9 = keras.layers.advanced_activations.ELU()(conv9)
+    conv9 = Convolution2D(32, 3, 3, border_mode='same', init='he_normal')(conv9)
+    conv9 = keras.layers.advanced_activations.ELU()(conv9)
+    conv9 = BatchNormalization()(conv9)
+    conv10 = Convolution2D(1, 1, 1, activation='sigmoid')(conv9)
+
+    model = Model(input=inputs, output=conv10)
+
+    return model
 
 
 def get_unet():
@@ -189,6 +410,84 @@ def get_unet():
 
     return model
 
+def get_unet4():
+    inputs = Input((1, img_rows, img_cols))
+    conv1 = Convolution2D(32, 3, 3, border_mode='same', init='he_uniform')(inputs)
+    conv1 = keras.layers.advanced_activations.PReLU(init='zero', weights=None)(conv1)
+    conv1 = BatchNormalization()(conv1)
+    conv1 = Convolution2D(32, 3, 3, border_mode='same', init='he_uniform')(conv1)
+    conv1 = keras.layers.advanced_activations.PReLU(init='zero', weights=None)(conv1)
+    conv1 = BatchNormalization()(conv1)
+
+    pool1 = MaxPooling2D(pool_size=(2, 2))(conv1)
+
+    conv2 = Convolution2D(64, 3, 3, border_mode='same', init='he_uniform')(pool1)
+    conv2 = keras.layers.advanced_activations.PReLU(init='zero', weights=None)(conv2)
+    conv2 = BatchNormalization()(conv2)
+    conv2 = Convolution2D(64, 3, 3, border_mode='same', init='he_uniform')(conv2)
+    conv2 = keras.layers.advanced_activations.PReLU(init='zero', weights=None)(conv2)
+    conv2 = BatchNormalization()(conv2)
+    pool2 = MaxPooling2D(pool_size=(2, 2))(conv2)
+
+    conv3 = Convolution2D(128, 3, 3, border_mode='same', init='he_uniform')(pool2)
+    conv3 = keras.layers.advanced_activations.PReLU(init='zero', weights=None)(conv3)
+    conv3 = BatchNormalization()(conv3)
+    conv3 = Convolution2D(128, 3, 3, border_mode='same', init='he_uniform')(conv3)
+    conv3 = keras.layers.advanced_activations.PReLU(init='zero', weights=None)(conv3)
+    conv3 = BatchNormalization()(conv3)
+    pool3 = MaxPooling2D(pool_size=(2, 2))(conv3)
+
+    conv4 = Convolution2D(256, 3, 3, border_mode='same', init='he_uniform')(pool3)
+    conv4 = keras.layers.advanced_activations.PReLU(init='zero', weights=None)(conv4)
+    conv4 = BatchNormalization()(conv4)
+    conv4 = Convolution2D(256, 3, 3, border_mode='same', init='he_uniform')(conv4)
+    conv4 = keras.layers.advanced_activations.PReLU(init='zero', weights=None)(conv4)
+    conv4 = BatchNormalization()(conv4)
+    pool4 = MaxPooling2D(pool_size=(2, 2))(conv4)
+
+    conv5 = Convolution2D(512, 3, 3, border_mode='same', init='he_uniform')(pool4)
+    conv5 = keras.layers.advanced_activations.PReLU(init='zero', weights=None)(conv5)
+    conv5 = BatchNormalization()(conv5)
+    conv5 = Convolution2D(512, 3, 3, border_mode='same', init='he_uniform')(conv5)
+    conv5 = keras.layers.advanced_activations.PReLU(init='zero', weights=None)(conv5)
+    conv5 = BatchNormalization()(conv5)
+
+    up6 = merge([UpSampling2D(size=(2, 2))(conv5), conv4], mode='concat', concat_axis=1)
+    conv6 = Convolution2D(256, 3, 3, border_mode='same', init='he_uniform')(up6)
+    conv6 = keras.layers.advanced_activations.PReLU(init='zero', weights=None)(conv6)
+    conv6 = BatchNormalization()(conv6)
+    conv6 = Convolution2D(256, 3, 3, border_mode='same', init='he_uniform')(conv6)
+    conv6 = keras.layers.advanced_activations.PReLU(init='zero', weights=None)(conv6)
+    conv6 = BatchNormalization()(conv6)
+
+    up7 = merge([UpSampling2D(size=(2, 2))(conv6), conv3], mode='concat', concat_axis=1)
+    conv7 = Convolution2D(128, 3, 3, border_mode='same', init='he_uniform')(up7)
+    conv7 = keras.layers.advanced_activations.PReLU(init='zero', weights=None)(conv7)
+    conv7 = BatchNormalization()(conv7)
+    conv7 = Convolution2D(128, 3, 3, border_mode='same', init='he_uniform')(conv7)
+    conv7 = keras.layers.advanced_activations.PReLU(init='zero', weights=None)(conv7)
+    conv7 = BatchNormalization()(conv7)
+
+    up8 = merge([UpSampling2D(size=(2, 2))(conv7), conv2], mode='concat', concat_axis=1)
+    conv8 = Convolution2D(64, 3, 3, border_mode='same', init='he_uniform')(up8)
+    conv8 = keras.layers.advanced_activations.PReLU(init='zero', weights=None)(conv8)
+    conv8 = BatchNormalization()(conv8)
+    conv8 = Convolution2D(64, 3, 3, border_mode='same', init='he_uniform')(conv8)
+    conv8 = keras.layers.advanced_activations.PReLU(init='zero', weights=None)(conv8)
+    conv8 = BatchNormalization()(conv8)
+
+    up9 = merge([UpSampling2D(size=(2, 2))(conv8), conv1], mode='concat', concat_axis=1)
+    conv9 = Convolution2D(32, 3, 3, border_mode='same', init='he_uniform')(up9)
+    conv9 = keras.layers.advanced_activations.PReLU(init='zero', weights=None)(conv9)
+    conv9 = BatchNormalization()(conv9)
+    conv9 = Convolution2D(32, 3, 3, border_mode='same', init='he_uniform')(conv9)
+    conv9 = keras.layers.advanced_activations.PReLU(init='zero', weights=None)(conv9)
+    conv9 = BatchNormalization()(conv9)
+    conv10 = Convolution2D(1, 1, 1, activation='sigmoid')(conv9)
+
+    model = Model(input=inputs, output=conv10)
+
+    return model
 
 def preprocess(imgs):
     imgs_p = np.ndarray((imgs.shape[0], imgs.shape[1], img_rows, img_cols), dtype=np.uint8)
@@ -232,7 +531,7 @@ def save_history(history, suffix):
 
 def extra_data():
     imgs_test, imgs_id_test = load_test_data()
-    imgs_test_mask = np.load('masks/imgs_mask_test_2016-08-09-20-32.npy')
+    imgs_test_mask = np.load('masks/imgs_mask_test_2016-08-12-07-00.npy')
 
     return preprocess(imgs_test), preprocess(imgs_test_mask)
 
@@ -263,12 +562,12 @@ def train_and_predict():
         featurewise_center=False,
         featurewise_std_normalization=False,
         rotation_range=5,
-        # width_shift_range=0.3,
-        # height_shift_range=0.3,
-        # zoom_range=0.3,
-        # channel_shift_range=30,
-        # shear_range=0.3,
-        # zca_whitening=True,
+        # width_shift_range=0.1,
+        # height_shift_range=0.1,
+        # zoom_range=0.1,
+        # # channel_shift_range=30,
+        # shear_range=5,
+        # # zca_whitening=True,
         horizontal_flip=True,
         vertical_flip=True
     )
@@ -296,7 +595,8 @@ def train_and_predict():
 
     print('[{}] Creating and compiling model...'.format(str(datetime.datetime.now())))
 
-    model = get_unet()
+    model = get_unet2()
+    # model = vgg_fcn()
     # model_checkpoint = ModelCheckpoint('unet.hdf5', monitor='loss', save_best_only=True)
 
     print('[{}] Fitting generator...'.format(str(datetime.datetime.now())))
@@ -306,10 +606,12 @@ def train_and_predict():
     datagen.fit(X_train)
 
     print('[{}] Fitting model...'.format(str(datetime.datetime.now())))
-    batch_size = 24
-    nb_epoch = 20
+    batch_size = 8
+    nb_epoch = 10
 
-    model.compile(optimizer=Adam(lr=1e-3), loss=dice_coef_spec_loss, metrics=[dice_coef_spec, 'binary_crossentropy'])
+    model.compile(optimizer=Nadam(lr=1e-3), loss=dice_coef_loss,
+                  metrics=[dice_coef, dice_coef_spec, 'binary_crossentropy'])
+
     model.fit_generator(datagen.flow(X_train,
                                      y_train,
                                      batch_size=batch_size,
@@ -357,6 +659,12 @@ def train_and_predict():
     suffix = str(now.strftime("%Y-%m-%d-%H-%M"))
     print '[{}] Saving history'.format(str(datetime.datetime.now()))
     save_history(history, suffix)
+
+
+    val_prediction = model.predict(X_val).astype(int).astype(float)
+    print 'binarized_prediction on val = ', dice_coef_np(y_val, val_prediction)
+    # test_prediction = model.predict(extra_x).astype(int).astype(float)
+    # print 'binarized_prediction on test = ', dice_coef_np(y_val, test_prediction)
 
 
 if __name__ == '__main__':

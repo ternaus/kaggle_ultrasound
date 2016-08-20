@@ -126,11 +126,6 @@ def save_history(history, suffix):
     filename = 'history/history_' + suffix + '.csv'
     pd.DataFrame(history.history).to_csv(filename, index=False)
 
-def extra_data():
-    imgs_test, imgs_id_test = load_test_data()
-    imgs_test_mask = np.load('masks/imgs_mask_test_2016-08-12-07-00.npy')
-
-    return preprocess(imgs_test), preprocess(imgs_test_mask)
 
 def train_and_predict():
     print('[{}] Loading and preprocessing train data...'.format(str(datetime.datetime.now())))
@@ -142,8 +137,9 @@ def train_and_predict():
 
     imgs_train = imgs_train.astype('float32')
 
-    print('[{}] Creating validation set...'.format(str(datetime.datetime.now())))
-    X_train, X_val, y_train, y_val = _train_val_split(imgs_train, imgs_mask_train)
+    X_train = imgs_train
+    y_train = imgs_mask_train
+
 
     datagen = image_generator_xy.ImageDataGenerator(
         # featurewise_center=False,
@@ -162,28 +158,17 @@ def train_and_predict():
     mean = np.mean(X_train)  # mean for data centering
 
     X_train -= mean
-    # X_train /= std  # We can probably live without this.
     X_train /= 255  # We can probably live without this.
-    # X_test -= mean
-    # X_test /= 255  # We can probably live without this.
-    X_val -= mean
-    X_val /= 255  # We can probably live without this.
 
     y_train = (y_train.astype(np.float32) / 255).astype(int).astype(float)  # scale masks to [0, 1]
-    # y_test = (y_test.astype(np.float32) / 255).astype(int).astype(float)    # scale masks to [0, 1]
-    y_val = (y_val.astype(np.float32) / 255).astype(int).astype(float)      # scale masks to [0, 1]
-
-    print('[{}] Getting extra data...'.format(str(datetime.datetime.now())))
-    extra_x, extra_y = extra_data()
 
     print
     print '[{}] Num train non zero masks...'.format(np.mean((np.mean(y_train, (2, 3)) > 0).astype(int).flatten()))
-    print '[{}] Num val non zero masks...'.format(np.mean((np.mean(y_val, (2, 3)) > 0).astype(int).flatten()))
     # print '[{}] Num test non zero masks...'.format(np.mean((np.mean(y_test, (2, 3)) > 0).astype(int).flatten()))
 
     print('[{}] Creating and compiling model...'.format(str(datetime.datetime.now())))
 
-    model = read_model('16_30_2016-08-14-12-29')
+    model = read_model('16_20_2016-08-14-21-36')
 
     print('[{}] Fitting generator...'.format(str(datetime.datetime.now())))
 
@@ -197,7 +182,7 @@ def train_and_predict():
 
     # sgd = SGD(lr=1e-5, decay=1e-6, momentum=0.9, nesterov=True)
 
-    model.compile(optimizer=Nadam(lr=1e-5), loss=dice_coef_loss,
+    model.compile(optimizer=Nadam(lr=1e-6), loss=dice_coef_loss,
                   metrics=[dice_coef, dice_coef_spec, 'binary_crossentropy'])
 
     model.fit_generator(datagen.flow(X_train,
@@ -206,27 +191,11 @@ def train_and_predict():
                                      shuffle=True),
                                      nb_epoch=nb_epoch,
                                      verbose=1,
-                                     validation_data=(X_val, y_val),
+                                     # validation_data=(X_val, y_val),
                                      samples_per_epoch=len(X_train),
                                      callbacks=[history],
                                      # shuffle=True
                                      )
-
-    # model.compile(optimizer=Nadam(lr=1e-5), loss=dice_coef_loss,
-    #               metrics=[dice_coef, dice_coef_spec, 'binary_crossentropy'])
-    #
-    #
-    # model.fit_generator(datagen.flow(X_train,
-    #                              y_train,
-    #                              batch_size=batch_size,
-    #                              shuffle=True),
-    #                              nb_epoch=nb_epoch,
-    #                              verbose=1,
-    #                              validation_data=(X_val, y_val),
-    #                              samples_per_epoch=len(X_train),
-    #                              callbacks=[history],
-    #                              # shuffle=True
-    #                 )
 
 
     now = datetime.datetime.now()
@@ -248,15 +217,8 @@ def train_and_predict():
     imgs_mask_test = model.predict(imgs_test, verbose=1)
     np.save('masks/imgs_mask_test_{suffix}.npy'.format(suffix=suffix), imgs_mask_test)
 
-    suffix = str(now.strftime("%Y-%m-%d-%H-%M"))
     print '[{}] Saving history'.format(str(datetime.datetime.now()))
     save_history(history, suffix)
-
-    val_prediction = model.predict(X_val).astype(int).astype(float)
-    print 'binarized_prediction on val = ', dice_coef_np(y_val, val_prediction)
-    test_prediction = model.predict((extra_x - mean)/255).astype(int).astype(float)
-    print 'binarized_prediction on test = ', dice_coef_np(extra_y, test_prediction)
-    print 'suffix = ', suffix
 
 
 if __name__ == '__main__':
